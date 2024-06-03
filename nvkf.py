@@ -3,7 +3,7 @@ import math
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import Ex_4_Helper as helper
-
+from scipy.optimize import minimize
 g = 9.8
 theta_israel = (np.pi / 6)
 omega_tot = 2 * np.pi / (24 * 3600)  # omega of earth
@@ -62,7 +62,7 @@ def runge_kutta_rocket_with_random_and_correction(r_0=(0, 0, 0), v_0=500, dt=0.1
     x_tearget, y_target = get_landing_spot((x[0], y[0], z[0]), (vx[0], vy[0], vz[0]), dt=dt, N=N, m=m, A=A,
                                            sensitivity=sensitivity)
     correction = (0, 0)
-    theoretical_t, theoretical_r, _,theoretical_v = helper.my_runge_kutta_rocket(dt=delta_t, N=n)
+    theoretical_t, theoretical_r, _, theoretical_v = helper.my_runge_kutta_rocket(dt=delta_t, N=n)
     for i in range(N - 1):
         x[i + 1], y[i + 1], z[i + 1], vx[i + 1], vy[i + 1], vz[i + 1] = helper.runga_step_with_correction(x[i], y[i],
                                                                                                           z[i],
@@ -78,7 +78,7 @@ def runge_kutta_rocket_with_random_and_correction(r_0=(0, 0, 0), v_0=500, dt=0.1
 
         current_position = (x[i], y[i ], z[i])
         current_velocity = (vx[i ], vy[i ], vz[i ])
-        correction = calculate_correction(current_position,current_velocity,theoretical_r,dt, theoretical_v)
+        correction = calculate_correction(current_position,current_velocity,theoretical_r,dt,theoretical_v)
         if (z[i + 1] < 0):
             break
 
@@ -90,13 +90,10 @@ def runge_kutta_rocket_with_random_and_correction(r_0=(0, 0, 0), v_0=500, dt=0.1
     return t[:i_ground + 1], (x[:i_ground + 1], y[:i_ground + 1], z[:i_ground + 1]), i_ground
 
 
-# create this function so that the location of impact is within 20 meters of the target
-Kp = 105
-Ki = 0.275
-Kd = 2200
+
 # Target position
 target_x = -8394.459213691083
-target_y = 7.4376783854855395
+target_y = 3.436456836839949e-06
 target_position = np.array([target_x,target_y,0])
 target_radius = 10
 # Initialize integral and previous error for PID controller
@@ -136,9 +133,9 @@ def calculate_correction(current_pos, current_velocity,theoretical_pos, dt =0.1,
     nearest_index = np.argmin(distances)
     x_theoretical, y_theoretical, z_theoretical = theoretical_positions[nearest_index]
     vx_theoretical, vy_theoretical, vz_theoretical = theoretical_velocities[nearest_index]
-    error_x = x_theoretical - x
-    error_y = y_theoretical - y
-    error_z = z_theoretical - z
+    error_x = x_theoretical - x + (vx_theoretical - vx)
+    error_y = y_theoretical - y + (vy_theoretical - vy)
+    error_z = z_theoretical - z + (vz_theoretical - vz)
     # Proportional control
     correction_x = Kp * error_x
     correction_y = Kp * error_y
@@ -170,11 +167,14 @@ def calculate_correction(current_pos, current_velocity,theoretical_pos, dt =0.1,
     theta, phi = helper.get_angles_from_v(current_velocity / np.sqrt(vx**2 + vy**2 + vz**2))
 
     # Decompose correction forces into engine forces
-
-    # f_0 =0
+    # f_0 = correction_x * (1/np.cos(phi)) + correction_z * np.tan(theta)*np.tan(phi)
+    # f_1=correction_z/np.cos(theta)
+    # f_0 = (correction_x + correction_z * np.tan(theta) * np.sin(phi))/(np.cos(phi))
+    # if  error_x > 0:
+    #     f_0 = f_0/error_x
+    f_0 =0
     f_1 =  np.sign(np.cos(theta)) * correction_z / np.cos(theta)
-    f_0 = -(correction_y + f_1 * np.sin(theta)*np.cos(phi))/np.sin(phi)
-    # f_1 = correction_z
+    # Decompose correction forces into x, y, z components
     f_x = -f_1 * np.sin(theta) * np.sin(phi) + f_0 * np.cos(phi)
     f_y = -f_1 * np.sin(theta) * np.cos(phi) - f_0 * np.sin(phi)
     f_z = f_1 * np.cos(theta)
@@ -183,58 +183,66 @@ def calculate_correction(current_pos, current_velocity,theoretical_pos, dt =0.1,
     max_force = 1000000
     f_0 = np.clip(f_0,-max_force,max_force)
     f_1 = np.clip(f_1,-max_force,max_force)
-    errors.append(np.sqrt(error_z ** 2) * np.sign(z - z_theoretical))
-    corrections.append(f_z)
     return (f_0, f_1)
 
-if __name__ == '__main__':
-    n = 10000
-    delta_t = 0.01
-    t, r, i = helper.runge_kutta_rocket(dt=delta_t, N=n)
-    plt.plot(r[0], r[2])
-    print(r[0][-1], r[1][-1])
-    # plt.show()
+def objective(params):
+    global Kp, Ki, Kd
+    Kp, Ki, Kd = params
+    results = [runge_kutta_rocket_with_random_and_correction(dt=delta_t, N=n)[1][0][-1] - target_x for _ in range(50)]
+    return np.mean(np.abs(results))
 
+def evaluate_pid(Kp, Ki, Kd):
+    global integral_x, integral_y, integral_z
+    global previous_error_x, previous_error_y, previous_error_z
+
+    integral_x, integral_y, integral_z = 0, 0, 0
+    previous_error_x, previous_error_y, previous_error_z = 0, 0, 0
+
+    results = [runge_kutta_rocket_with_random_and_correction(dt=delta_t, N=n)[1][0][-1] - target_x for _ in range(50)]
+    return np.mean(np.abs(results))
+
+if __name__ == '__main__':
+    target_x = -8394.459213691083
+    target_y = 3.436456836839949e-06
     n = 10000
-    delta_t = 0.01
-    errors = []
-    corrections = []
+    delta_t = 0.5
+
+    Kp_values = np.linspace(10, 100, 5)
+    Ki_values = np.linspace(0, 1, 5)
+    Kd_values = np.linspace(10, 100, 5)
+
+    best_error = float('inf')
+    best_params = None
+
+    for Kp in Kp_values:
+        for Ki in Ki_values:
+            for Kd in Kd_values:
+                error = evaluate_pid(Kp, Ki, Kd)
+                if error < best_error:
+                    best_error = error
+                    best_params = (Kp, Ki, Kd)
+                print(f'Kp: {Kp}, Ki: {Ki}, Kd: {Kd}, Error: {error}')
+
+    Kp, Ki, Kd = best_params
+    print(f'Optimal Kp: {Kp}, Ki: {Ki}, Kd: {Kd}')
+
     t, r, i = runge_kutta_rocket_with_random_and_correction(dt=delta_t, N=n)
     plt.plot(r[0], r[2])
-    print(r[0][-1], r[1][-1])
+    print(r[0][-1], r[2][-1])
     plt.show()
 
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(t[:len(errors)], errors, label='Error')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Error (m)')
-    plt.title('Error Throughout the Flight')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(t[:len(corrections)], corrections, label='correction')
-    plt.xlabel('Time (s)')
-    plt.ylabel('correction (m)')
-    plt.title('correction Throughout the Flight')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
-
-    # results = [(runge_kutta_rocket_with_random_and_correction(dt=delta_t, N=n)[1][0][-1] + 8394.459213691083) for _ in
-    #            range(50)]
-    results = [np.sqrt((res[1][0][-1] + 8394.459213691083) ** 2 + (res[1][1][-1] - 7.437678543884844) ** 2)
-               for res in (runge_kutta_rocket_with_random_and_correction(dt=delta_t, N=n) for _ in range(1000))]
-    print(np.mean(np.abs(results)))
-
-
-    # Plot the results
-    plt.figure(figsize=(10, 6))
-    plt.plot(results, marker='o', linestyle='-', markersize=2)
-    plt.title('Landing Error (1000 runs)')
-    plt.xlabel('Run')
-    plt.ylabel('landing error')
-    plt.grid(True)
-    plt.show()
+    # n = 10000
+    # delta_t = 0.5
+    # target_x = -8394.459213691083
+    # target_y = 3.436456836839949e-06
+    #
+    # initial_guess = [100, 0.2, 87]
+    # bounds = [(0, 1000), (0, 3), (0, 300)]
+    # result = minimize(objective, initial_guess, bounds=bounds, method='L-BFGS-B')
+    # Kp, Ki, Kd = result.x
+    # print(f'Optimal Kp: {Kp}, Ki: {Ki}, Kd: {Kd}')
+    #
+    # t, r, i = runge_kutta_rocket_with_random_and_correction(dt=delta_t, N=n)
+    # plt.plot(r[0], r[2])
+    # print(r[0][-1], r[2][-1])
+    # plt.show()

@@ -19,7 +19,6 @@ def acceleration(v_x, v_y, v_z, m, A):
     a_z = - (g + (alpha * A * np.sqrt(v_x ** 2 + v_y ** 2 + v_z ** 2) * v_z / m) + 2 * (v_y * omega_x - omega_y * v_x))
     return a_x, a_y, a_z
 
-
 def runge_kutta_rocket(r_0=(0, 0, 0), dt=0.01, N=10000, m=500,v_0=(500 * np.cos(np.radians(20)) * np.sin(np.radians(-90)),
                             500 * np.cos(np.radians(-90)) * np.cos(np.radians(20)),
                             500 * np.sin(np.radians(20))), A=1, sensitivity=0.01):
@@ -153,3 +152,35 @@ def get_angles_from_v(v):
     theta = np.arcsin(v[2] / np.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2))
     phi = np.arctan2(v[0], v[1])
     return theta, phi
+
+
+
+
+def my_runge_kutta_rocket(r_0=(0, 0, 0), dt=0.01, N=10000, m=500,v_0=(500 * np.cos(np.radians(20)) * np.sin(np.radians(-90)),
+                            500 * np.cos(np.radians(-90)) * np.cos(np.radians(20)),
+                            500 * np.sin(np.radians(20))), A=1, sensitivity=0.01):
+    t = np.linspace(start=0, num=N, stop=0 + (N - 1) * dt)
+    x = np.ndarray(N)
+    y = np.ndarray(N)
+    z = np.ndarray(N)
+    vx = np.ndarray(N)
+    vy = np.ndarray(N)
+    vz = np.ndarray(N)
+
+    x[0], y[0], z[0] = r_0
+    vx[0], vy[0], vz[0] = v_0
+
+    for i in range(N - 1):
+        x[i + 1], y[i + 1], z[i + 1], vx[i + 1], vy[i + 1], vz[i + 1] = runga_step(x[i], y[i], z[i], vx[i], vy[i],
+                                                                                   vz[i], m, A, dt)
+
+        if (z[i + 1] < 0):
+            break
+
+    i_ground = np.argmax(z < 0.)
+
+    t[i_ground], x[i_ground], y[i_ground], z[i_ground] = final_step_to_ground_no_randomness(
+        (x[i_ground - 1], y[i_ground - 1], z[i_ground - 1]), (x[i_ground - 2], y[i_ground - 2], z[i_ground - 2]),
+        (vx[i_ground - 1], vy[i_ground - 1], vz[i_ground - 1]), sensitivity, m, A, t[i_ground - 1], t[i_ground - 2])
+    return t[:i_ground + 1], (x[:i_ground + 1], y[:i_ground + 1], z[:i_ground + 1]), i_ground, (vx[:i_ground + 1], vy[:i_ground + 1], vz[:i_ground + 1])
+
